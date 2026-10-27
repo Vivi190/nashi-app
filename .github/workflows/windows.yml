@@ -119,7 +119,10 @@ jobs:
           $fixture = Start-Process -FilePath $installed -ArgumentList '--verify-update-state' -PassThru -Wait
           if ($fixture.ExitCode -ne 0) { throw "Installed app fixture exited with $($fixture.ExitCode)" }
           $uninstall = Start-Process -FilePath (Join-Path (Split-Path $installed) 'uninst.exe') -ArgumentList '/S' -PassThru -Wait
-          if ($uninstall.ExitCode -ne 0) { throw "Silent uninstaller exited with $($uninstall.ExitCode)" }
+          # The NSIS uninstaller copies itself to temp and returns early; wait
+          # for the files to actually disappear before asserting.
+          $deadline = (Get-Date).AddSeconds(60)
+          while ((Test-Path $installed) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
           if (Test-Path $installed) { throw 'Silent uninstall left Nashi.exe behind' }
           if (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Nashi' -ErrorAction SilentlyContinue) { throw 'Uninstall registry entry remains' }
           Write-Host 'Per-user Setup install, native fixture and silent uninstall verified.'

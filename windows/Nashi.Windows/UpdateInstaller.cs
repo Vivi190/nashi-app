@@ -51,7 +51,14 @@ internal static class UpdateInstaller
     }
     private static bool InstalledBySetup()
     {
-        try{using var key=Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Nashi");return string.Equals(key?.GetValue("InstallMode") as string,"setup",StringComparison.OrdinalIgnoreCase);}
+        // The Setup writes the registry marker and always leaves an uninstaller
+        // beside the app. Checking both keeps a lost registry value from ever
+        // routing an installed copy into the portable folder swap.
+        try
+        {
+            if (File.Exists(Path.Combine(AppContext.BaseDirectory, "uninst.exe"))) return true;
+            using var key=Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Nashi");return string.Equals(key?.GetValue("InstallMode") as string,"setup",StringComparison.OrdinalIgnoreCase);
+        }
         catch(Exception error)when(error is System.Security.SecurityException or IOException or UnauthorizedAccessException or System.Runtime.InteropServices.COMException){return false;}
     }
     private static async Task StageSetupAsync(WindowsUpdate update,IProgress<OperationProgress> progress,CancellationToken token)
