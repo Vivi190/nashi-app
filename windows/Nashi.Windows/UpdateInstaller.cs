@@ -8,6 +8,14 @@ internal static class UpdateInstaller
     public static Version Current=>Assembly.GetExecutingAssembly().GetName().Version??new(0,7,0);
     public static async Task StageAsync(WindowsUpdate update,IProgress<OperationProgress> progress,CancellationToken token)
     {
+        // A Setup-installed Nashi must never folder-swap: the replacement
+        // payload carries no uninstaller and would leave the registry entry
+        // dangling. Installed copies update by silently rerunning Setup.
+        if(InstalledBySetup())
+        {
+            if(update.SetupUrl is null)throw new InvalidDataException("This Nashi was installed with Setup, but the update feed does not carry a Setup package yet. Download the latest Nashi Setup from the release page.");
+            await StageSetupAsync(update,progress,token);return;
+        }
         var target=Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory);var parent=Path.GetDirectoryName(target)??throw new IOException("Extract Nashi into its own writable folder first.");
         if(target==Path.GetPathRoot(target)||(File.GetAttributes(target)&FileAttributes.ReparsePoint)!=0)throw new IOException("Use a regular writable folder for portable updates.");
         var stage=Path.Combine(parent,".nashi-update-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(stage);
@@ -40,6 +48,27 @@ internal static class UpdateInstaller
         // Backups remain recoverable; the app never recursively deletes a user's
         // portable directory merely because an update succeeded.
         return 0;
+    }
+    private static bool InstalledBySetup()
+    {
+        try{using var key=Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Nashi");return string.Equals(key?.GetValue("InstallMode") as string,"setup",StringComparison.OrdinalIgnoreCase);}
+        catch(Exception error)when(error is System.Security.SecurityException or IOException or UnauthorizedAccessException or System.Runtime.InteropServices.COMException){return false;}
+    }
+    private static async Task StageSetupAsync(WindowsUpdate update,IProgress<OperationProgress> progress,CancellationToken token)
+    {
+        var stage=Path.Combine(Path.GetTempPath(),".nashi-setup-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(stage);
+        try
+        {
+            var installer=Path.Combine(stage,"Nashi-Setup-x64.exe");
+            await VerifiedDownload.FetchAsync(new(update.SetupUrl!),installer,update.SetupLength,p=>progress.Report(new(p*.9,"Downloading Nashi "+update.Version+"…")),token);
+            progress.Report(new(.94,"Verifying update signature…"));await PublicUpdates.VerifyFileAsync(installer,update.SetupLength,update.SetupEdSignature!,token);
+            progress.Report(new(.97,"Installing Nashi "+update.Version+"…"));
+            // The Setup runs silently, waits for this app to exit, installs over
+            // the registered folder and reopens Nashi.
+            var start=new ProcessStartInfo(installer){UseShellExecute=false};start.ArgumentList.Add("/S");
+            _ = Process.Start(start)??throw new IOException("Cannot start the Nashi Setup.");
+        }
+        catch{try{Directory.Delete(stage,true);}catch(IOException){}catch(UnauthorizedAccessException){}throw;}
     }
     private sealed record InstallRequest(int ProcessId,string Target,string Payload,string Stage);
 }
