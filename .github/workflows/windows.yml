@@ -100,7 +100,7 @@ jobs:
         run: |
           if (-not (Get-Command makensis.exe -ErrorAction SilentlyContinue)) { choco install nsis -y --no-progress }
           $version = ([xml](Get-Content windows/Directory.Build.props)).Project.PropertyGroup.Version
-          & makensis.exe /DNASHI_VERSION=$version windows/installer/windows-setup.nsi
+          & makensis.exe /NOCD /DNASHI_VERSION=$version windows/installer/windows-setup.nsi
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-FileHash "build/Nashi-Setup-$version-x64.exe" -Algorithm SHA256
       - name: Verify Setup installs, runs and uninstalls silently
@@ -120,9 +120,9 @@ jobs:
           if ($fixture.ExitCode -ne 0) { throw "Installed app fixture exited with $($fixture.ExitCode)" }
           $uninstall = Start-Process -FilePath (Join-Path (Split-Path $installed) 'uninst.exe') -ArgumentList '/S' -PassThru -Wait
           # The NSIS uninstaller copies itself to temp and returns early; wait
-          # for the files to actually disappear before asserting.
+          # for the files and the registry entry to actually disappear.
           $deadline = (Get-Date).AddSeconds(60)
-          while ((Test-Path $installed) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
+          while (((Test-Path $installed) -or (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Nashi' -ErrorAction SilentlyContinue)) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
           if (Test-Path $installed) { throw 'Silent uninstall left Nashi.exe behind' }
           if (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Nashi' -ErrorAction SilentlyContinue) { throw 'Uninstall registry entry remains' }
           Write-Host 'Per-user Setup install, native fixture and silent uninstall verified.'

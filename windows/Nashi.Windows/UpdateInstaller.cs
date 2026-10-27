@@ -51,15 +51,23 @@ internal static class UpdateInstaller
     }
     private static bool InstalledBySetup()
     {
-        // The Setup writes the registry marker and always leaves an uninstaller
-        // beside the app. Checking both keeps a lost registry value from ever
-        // routing an installed copy into the portable folder swap.
+        // The Setup marker belongs to the user account, not to this executable:
+        // a portable copy on the same machine must keep updating itself. The
+        // registered InstallPath has to match the running directory and the
+        // uninstaller has to sit beside the app.
         try
         {
-            if (File.Exists(Path.Combine(AppContext.BaseDirectory, "uninst.exe"))) return true;
-            using var key=Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Nashi");return string.Equals(key?.GetValue("InstallMode") as string,"setup",StringComparison.OrdinalIgnoreCase);
+            using var key=Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Nashi");
+            if(!string.Equals(key?.GetValue("InstallMode") as string,"setup",StringComparison.OrdinalIgnoreCase))return false;
+            if(key?.GetValue("InstallPath") is not string installedPath||!SameDirectory(installedPath,AppContext.BaseDirectory))return false;
+            return File.Exists(Path.Combine(AppContext.BaseDirectory,"uninst.exe"));
         }
         catch(Exception error)when(error is System.Security.SecurityException or IOException or UnauthorizedAccessException or System.Runtime.InteropServices.COMException){return false;}
+    }
+    private static bool SameDirectory(string left,string right)
+    {
+        string Normalize(string value){var full=Path.GetFullPath(value).TrimEnd(Path.DirectorySeparatorChar,Path.AltDirectorySeparatorChar);return OperatingSystem.IsWindows()?full.ToLowerInvariant():full;}
+        return Normalize(left)==Normalize(right);
     }
     private static async Task StageSetupAsync(WindowsUpdate update,IProgress<OperationProgress> progress,CancellationToken token)
     {
@@ -69,6 +77,10 @@ internal static class UpdateInstaller
             var installer=Path.Combine(stage,"Nashi-Setup-x64.exe");
             await VerifiedDownload.FetchAsync(new(update.SetupUrl!),installer,update.SetupLength,p=>progress.Report(new(p*.9,"Downloading Nashi "+update.Version+"…")),token);
             progress.Report(new(.94,"Verifying update signature…"));await PublicUpdates.VerifyFileAsync(installer,update.SetupLength,update.SetupEdSignature!,token);
+            // The signature proves who signed the package, not that it carries
+            // the announced version; never launch an older signed Setup.
+            var expected=Version.Parse(update.Version);var expectedFileVersion=new Version(expected.Major,expected.Minor,Math.Max(0,expected.Build),Math.Max(0,expected.Revision));
+            if(!Version.TryParse(FileVersionInfo.GetVersionInfo(installer).FileVersion,out var parsed)||parsed!=expectedFileVersion)throw new InvalidDataException("The signed Setup package version does not match this update.");
             progress.Report(new(.97,"Installing Nashi "+update.Version+"…"));
             // The Setup runs silently, waits for this app to exit, installs over
             // the registered folder and reopens Nashi.
