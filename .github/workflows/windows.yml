@@ -103,6 +103,11 @@ jobs:
           & makensis.exe /NOCD /DNASHI_VERSION=$version windows/installer/windows-setup.nsi
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-FileHash "build/Nashi-Setup-$version-x64.exe" -Algorithm SHA256
+      - name: Verify Setup preserves unrelated staging directories
+        shell: pwsh
+        run: |
+          $makensis = (Get-Command makensis.exe -ErrorAction Stop).Source
+          & ./windows/installer/test-setup-isolation.ps1 -MakeNsis $makensis
       - name: Verify Setup installs, runs and uninstalls silently
         shell: pwsh
         run: |
