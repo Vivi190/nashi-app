@@ -112,11 +112,20 @@ SectionEnd
 ; installation is untouched, so a failed or cancelled extraction never leaves
 ; the user without a working Nashi.
 Function StagePayload
-  GetFullPathName $StagingDir "$INSTDIR\.."
-  StrCpy $StagingDir "$StagingDir\.nashi-setup-staging"
-  RMDir /r "$StagingDir"
+  GetFullPathName $R0 "$INSTDIR\.."
+  CreateDirectory "$R0"
+  ; A unique sibling staging path prevents deleting an unrelated folder.
+  ; GetTempFileName atomically reserves the path before we make it a folder.
+  ClearErrors
+  GetTempFileName $StagingDir "$R0"
+  IfErrors 0 +2
+    Abort "Unable to create a Setup staging directory."
+  Delete "$StagingDir"
   SetOutPath "$StagingDir"
   File /r /x "*.pdb" "${NASHI_PAYLOAD}\*.*"
+  ; Leave staging before renaming/deleting it; Windows cannot remove the
+  ; process's current working directory.
+  SetOutPath "$TEMP"
 FunctionEnd
 
 ; A running Nashi locks its files. Renaming the executable can only succeed
